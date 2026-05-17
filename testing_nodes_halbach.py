@@ -39,12 +39,10 @@ pt_7 = np.array([length, width, height , sign])
 
 node_positions = np.array([pt_0, pt_1, pt_2, pt_3, pt_4, pt_5, pt_6, pt_7])
 
-
-# TODO Function that calculated the B vector
-
 def compute_b_field(coords, node_positions, epsilon):
     """
     Calculates the 3D magnetic B-field vector at a specific evaluation point.
+    Result of the function is magnetic field vector at the point coords in the Magnet coordinate system.
     Parameters:
     -----------
     coords : array-like of shape (3,)
@@ -71,7 +69,6 @@ def compute_b_field(coords, node_positions, epsilon):
     By = k * epsilon / (4 * np.pi) * np.log(-R[:,0] + np.sqrt(R[:,0]**2 + R[:,1]**2 + R[:,2]**2))
     Bz = k * epsilon / (4 * np.pi) * np.arctan((R[:,0]*R[:,1]) / (R[:,2]*np.sqrt(R[:,0]**2 + R[:,1]**2 + R[:,2]**2))) ### !!!! maybe z missing, check in the literature again
 
-   
     B_contributions = np.array([Bx, By, Bz])
     B_vector = np.sum(B_contributions, axis=1)
     # print(f"Rz: {R[:,2]}")
