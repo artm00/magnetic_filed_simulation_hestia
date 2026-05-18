@@ -157,5 +157,3 @@ def _calculate_magnet_field(xm, ym, zm, cx, cy, cz, wx, wy, hz, Br, mag_dir):
 
 
 
-
-magnetic_nodes_halbach()
