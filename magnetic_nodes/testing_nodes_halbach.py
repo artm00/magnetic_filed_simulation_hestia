@@ -1,5 +1,6 @@
 import numpy as np
 from b_field_in_magnet_coords import compute_b_field
+from first_order_harmonic import compute_b_harmonic_first_order
 import sys
 from pathlib import Path
 
@@ -20,10 +21,10 @@ tau_m = 25.4e-3            # Pole width (m) = length/width of z manget
 hm = 0.5 * 0.0254          # Magnet thickness: 0.5 inches to metres
 Br = 1.32                  # Remanence (T), typical NdFeB
 
-NR_Z_MAGNETS = 1
+NR_Z_MAGNETS = 6
 
 length = tau_m
-width = tau_m
+width = tau_m 
 height = hm
 
 # 8 corner nodes of the cuboid; pt_0 is at the origin
@@ -68,6 +69,57 @@ Trafo_dict = {
 }
 
 # ------------------------- Computing B field -------------------------
+def origin_of_magnet_array(col, row, cols, rows, width, length):
+    # return np.array([width * (col), length * (row), 0]) # sets the origin of array at the bottom left corner of the array
+    return np.array([width * (col - cols/2), length * (row - rows/2), 0]) # sets the origin of array at the center of the array
+
+
+def compute_b_volume(x_coords, y_coords, z_coords,
+                     constallation, Trafo_dict, node_positions, Br,
+                     length, width):
+    rows, cols = constallation.shape
+    B_volume = np.zeros((len(x_coords), len(y_coords), len(z_coords), 3))
+
+    for row in range(rows):
+        for col in range(cols):
+            if constallation[row, col] == 0:
+                continue
+            sign = 1
+            if constallation[row, col] in (1, 2):
+                if constallation[row, col] == 1:
+                    sign = -1
+                T = Trafo_dict["R_My"].copy()
+            elif constallation[row, col] in (3, 4):
+                if constallation[row, col] == 3:
+                    sign = -1
+                T = Trafo_dict["R_Mx"].copy()
+            elif constallation[row, col] in (5, 6):
+                if constallation[row, col] == 5:
+                    sign = -1
+                T = Trafo_dict["R_Mz"].copy()
+
+            translation = origin_of_magnet_array(col, row, cols, rows, width, length)
+            translation = np.append(translation, 1)  # make it homogeneous
+            T[:, 3] = translation
+            T_inv = np.linalg.inv(T)
+            Rotation = T[:3, :3]
+
+            for i, x in enumerate(x_coords):
+                for j, y in enumerate(y_coords):
+                    for k, z in enumerate(z_coords):
+                        coord = np.array([x, y, z, 1])
+                        coord_mag = T_inv @ coord
+                        coord_mag = coord_mag[:3]
+
+                        B_mag = np.array(compute_b_field(
+                            coords=coord_mag,
+                            node_positions=node_positions,
+                            epsilon=sign * Br))
+
+                        B_volume[i, j, k] += Rotation @ B_mag
+
+    return B_volume
+
 
 # constellation first — its size drives the grid extents
 constallation = create_magnet_constellation(NR_Z_MAGNETS)
@@ -75,60 +127,14 @@ print(constallation)
 rows, cols = constallation.shape
 
 # 3D grid covering the full constellation footprint + one-cell buffer on each side
-nx, ny, nz = 10, 10, 7
-x_coords = np.linspace(-width,        cols * width  + width,  nx)
-y_coords = np.linspace(-length,       rows * length + length, ny)
-z_coords = np.linspace(-height,       2 * height,             nz)
+x_coords = np.linspace(-width - width * cols/2,  cols/2 * width  + width,  10)
+y_coords = np.linspace(-length - length * rows/2, rows/2 * length + length, 10)
+z_coords = np.linspace(-height * 2, 3* height,              7)
 
 XXX, YYY, ZZZ = np.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
-B_volume = np.zeros((nx, ny, nz, 3))
-for row in range(rows):
-    for col in range(cols):
-        print(constallation[row, col])
-        # selecting the magnetisation direction for the current cell
-        sign = 1
-        if constallation[row, col] == 0:
-            continue  # skip empty cells
-        if constallation[row, col] == 1 or constallation[row, col] == 2:
-            if constallation[row, col] == 1:
-                sign = -1
-            T = Trafo_dict["R_My"].copy()
-        elif constallation[row, col] == 3 or constallation[row, col] == 4:
-            if constallation[row, col] == 3:
-                sign = -1
-            T = Trafo_dict["R_Mx"].copy()
-        elif constallation[row, col] == 5 or constallation[row, col] == 6:
-            if constallation[row, col] == 5:
-                sign = -1
-            T = Trafo_dict["R_Mz"].copy()
-
-        # Creating Translation for the current magnet
-        translation = np.array([width*col, length*row, 0, 1])
-        T[:, 3] = translation
-        T_inv = np.linalg.inv(T)
-        Rotation = T[:3, :3]
-
-        for i, x in enumerate(x_coords):
-            for j, y in enumerate(y_coords):
-                for k, z in enumerate(z_coords):
-                    coord = np.array([x, y, z])
-                    coord = np.append(coord, 1)
-                    # compute coord in the magnet coordinate system
-                    
-                    coord_mag = T_inv @ coord
-                    coord_mag = coord_mag[:3]  # drop homogeneous coordinate
-
-                    # compute B field in the magenet coordinate system
-                    B_mag = compute_b_field(coords=coord_mag, node_positions=node_positions, epsilon=sign * Br)
-                    B_mag = np.array(B_mag)
-
-                    # transform B field back to global coordinate system
-                    B_global = Rotation @ B_mag
-                    
-
-                    # if constallation[row, col] == 4:
-                    #     B_volume[i, j, k] += B_global
-                    B_volume[i, j, k] += B_global
+B_volume = compute_b_volume(x_coords, y_coords, z_coords,
+                            constallation, Trafo_dict, node_positions, Br,
+                            length, width)
                         
 
 # ------------------------- PLOTTING -------------------------
@@ -173,7 +179,7 @@ for row in range(rows):
     for col in range(cols):
         if constallation[row, col] == 0:
             continue  # skip empty cells
-        translation = np.array([width * col, length * row, 0])
+        translation = origin_of_magnet_array(col, row, cols, rows, width, length)
         # translation defines the staring point to draw the magnet.
         for edge in edges:
             start, end = edge
@@ -188,11 +194,86 @@ ax.set_xlabel('x (mm)')
 ax.set_ylabel('y (mm)')
 ax.set_zlabel('z (mm)')
 ax.set_title('B field in 3D (Bx, By, Bz arrows)')
-
+ax.set_box_aspect([
+    x_coords[-1] - x_coords[0],
+    y_coords[-1] - y_coords[0],
+    z_coords[-1] - z_coords[0],
+])
 
 plt.tight_layout()
 plt.show()
 
 
+# ------------------------- LINE SAMPLE PLOT -------------------------
+
+def compute_b_along_line(points, constallation, Trafo_dict, node_positions, Br, length, width):
+    """Sample B field at each point in `points` (shape N×3, world coords)."""
+    rows, cols = constallation.shape
+    B_line = np.zeros((len(points), 3))
+
+    for row in range(rows):
+        for col in range(cols):
+            if constallation[row, col] == 0:
+                continue
+            sign = 1
+            if constallation[row, col] in (1, 2):
+                if constallation[row, col] == 1:
+                    sign = -1
+                T = Trafo_dict["R_My"].copy()
+            elif constallation[row, col] in (3, 4):
+                if constallation[row, col] == 3:
+                    sign = -1
+                T = Trafo_dict["R_Mx"].copy()
+            elif constallation[row, col] in (5, 6):
+                if constallation[row, col] == 5:
+                    sign = -1
+                T = Trafo_dict["R_Mz"].copy()
+
+            translation = origin_of_magnet_array(col, row, cols, rows, width, length)
+            translation = np.append(translation, 1)
+            T[:, 3] = translation
+            T_inv = np.linalg.inv(T)
+            Rotation = T[:3, :3]
+
+            for idx, pt in enumerate(points):
+                coord = np.append(pt, 1)
+                coord_mag = (T_inv @ coord)[:3]
+                B_mag = np.array(compute_b_field(
+                    coords=coord_mag,
+                    node_positions=node_positions,
+                    epsilon=sign * Br))
+                B_line[idx] += Rotation @ B_mag
+
+    return B_line
 
 
+def plot_b_along_line(p_start, p_end, n_points, constallation, Trafo_dict,
+                      node_positions, Br, length, width, tau, tau_m, hm):
+    t = np.linspace(0, 1, n_points)
+    points = np.outer(1 - t, p_start) + np.outer(t, p_end)  # (n_points, 3)
+    dist_mm = t * np.linalg.norm(p_end - p_start) * 1000
+
+    B_nodes    = compute_b_along_line(points, constallation, Trafo_dict,
+                                      node_positions, Br, length, width)
+    B_harmonic = compute_b_harmonic_first_order(points, tau, tau_m, hm, Br)
+
+    labels = ['Bx', 'By', 'Bz']
+    _, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    for k, ax in enumerate(axes):
+        ax.plot(dist_mm, B_nodes[:, k],    'b-',  linewidth=1.5, label='Magnetic nodes')
+        ax.plot(dist_mm, B_harmonic[:, k], 'r--', linewidth=1.5, label='Harmonic (1st order)')
+        ax.set_ylabel(f'{labels[k]} (T)')
+        ax.legend(loc='best')
+        ax.grid(True)
+    axes[-1].set_xlabel('Distance along line (mm)')
+    axes[0].set_title(
+        f'B field along line  start=({p_start[0]*1e3:.1f}, {p_start[1]*1e3:.1f}, {p_start[2]*1e3:.1f}) mm  '
+        f'end=({p_end[0]*1e3:.1f}, {p_end[1]*1e3:.1f}, {p_end[2]*1e3:.1f}) mm')
+    plt.tight_layout()
+    plt.show()
+
+
+p_start = np.array([3.5e-3, 10.5e-3, -25e-3])
+p_end   = np.array([192.5e-3, 37.5e-3, -25e-3])
+plot_b_along_line(p_start, p_end, 200, constallation, Trafo_dict,
+                  node_positions, Br, length, width, tau, tau_m, hm)
